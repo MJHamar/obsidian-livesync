@@ -288,11 +288,37 @@ export async function main() {
         }
         console.error(`${prefix} ${message}`);
     });
-    // Prevent replication result to be processed automatically.
-    serviceHubInstance.replication.processSynchroniseResult.addHandler(async () => {
-        console.error(`[Info] Replication result received, but not processed automatically in CLI mode.`);
-        return await Promise.resolve(true);
-    }, -100);
+    // Handle replication results - in daemon mode, automatically apply remote changes to local files
+    // In other modes, prevent automatic processing
+    if (options.command === "daemon") {
+        // Enable automatic application of remote changes in daemon mode
+        serviceHubInstance.replication.processSynchroniseResult.addHandler(async (entry) => {
+            const entryPath = entry && "path" in entry ? entry.path : null;
+            if (!entryPath) {
+                console.error(`[Daemon] Warning: Received entry without path`);
+                return false;
+            }
+            console.error(`[Daemon] Applying remote change: ${entryPath}`);
+            try {
+                const result = await core.serviceModules.fileHandler.dbToStorage(entryPath as any, null, true);
+                if (result) {
+                    console.error(`[Daemon] Applied: ${entryPath}`);
+                } else {
+                    console.error(`[Daemon] Failed to apply: ${entryPath}`);
+                }
+                return result;
+            } catch (error) {
+                console.error(`[Daemon] Error applying ${entryPath}:`, error);
+                return false;
+            }
+        });
+    } else {
+        // Prevent replication result to be processed automatically in non-daemon modes
+        serviceHubInstance.replication.processSynchroniseResult.addHandler(async () => {
+            console.error(`[Info] Replication result received, but not processed automatically in CLI mode.`);
+            return await Promise.resolve(true);
+        }, -100);
+    }
 
     // Setup settings handlers
     const settingService = serviceHubInstance.setting;

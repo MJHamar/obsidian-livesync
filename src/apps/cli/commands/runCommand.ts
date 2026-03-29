@@ -15,6 +15,72 @@ export async function runCommand(options: CLIOptions, context: CLICommandContext
 
     await core.services.control.activated;
     if (options.command === "daemon") {
+        console.log("[Daemon] Starting LiveSync daemon...");
+
+        const settings = core.services.setting.currentSettings();
+
+        // Check if daemon features are enabled
+        const daemonWatchEnabled = settings.daemonWatchEnabled !== false; // default true
+        const daemonAutoSync = settings.daemonAutoSync !== false; // default true
+        const daemonSyncInterval = settings.daemonSyncInterval || 60; // default 60 seconds
+        const daemonSyncOnStart = settings.daemonSyncOnStart !== false; // default true
+
+        // Start file watching if enabled
+        if (daemonWatchEnabled) {
+            console.log("[Daemon] File watching enabled");
+            console.log(`[Daemon] Ignore patterns: ${(settings.daemonIgnorePatterns || []).join(", ")}`);
+            // File watching is started automatically by StorageEventManagerCLI when initialized
+        } else {
+            console.log("[Daemon] File watching disabled");
+        }
+
+        // Sync on start if enabled
+        if (daemonSyncOnStart && settings.isConfigured) {
+            console.log("[Daemon] Performing initial sync...");
+            try {
+                const result = await core.services.replication.replicate(true);
+                if (result) {
+                    console.log("[Daemon] Initial sync completed successfully");
+                } else {
+                    console.log("[Daemon] Initial sync completed with warnings");
+                }
+            } catch (error) {
+                console.error("[Daemon] Initial sync failed:", error);
+            }
+        }
+
+        // Setup periodic sync if enabled
+        let syncIntervalId: ReturnType<typeof setInterval> | null = null;
+        if (daemonAutoSync && daemonSyncInterval > 0 && settings.isConfigured) {
+            console.log(`[Daemon] Periodic sync enabled (interval: ${daemonSyncInterval}s)`);
+            syncIntervalId = setInterval(async () => {
+                try {
+                    console.log("[Daemon] Running periodic sync...");
+                    await core.services.replication.replicate(true);
+                } catch (error) {
+                    console.error("[Daemon] Periodic sync failed:", error);
+                }
+            }, daemonSyncInterval * 1000);
+        } else {
+            console.log("[Daemon] Periodic sync disabled");
+        }
+
+        console.log("[Daemon] Running. Press Ctrl+C to stop.");
+
+        // Keep the process running
+        // The actual hang happens in main.ts, we just need to return true here
+        // But let's also setup cleanup for the interval
+        process.on("SIGINT", () => {
+            if (syncIntervalId) {
+                clearInterval(syncIntervalId);
+            }
+        });
+        process.on("SIGTERM", () => {
+            if (syncIntervalId) {
+                clearInterval(syncIntervalId);
+            }
+        });
+
         return true;
     }
 

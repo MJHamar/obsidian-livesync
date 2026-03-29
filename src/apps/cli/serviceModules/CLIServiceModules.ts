@@ -35,14 +35,28 @@ export function initialiseServiceModulesCLI(
         pathService: services.path,
     });
 
-    // CLI-specific storage event manager
-    const storageEventManager = new StorageEventManagerCLI(basePath, core, {
-        fileProcessing: services.fileProcessing,
-        setting: services.setting,
-        vaultService: services.vault,
-        storageAccessManager: storageAccessManager,
-        APIService: services.API,
-    });
+    // CLI-specific storage event manager with file watching
+    // Get ignore patterns from settings or use defaults
+    const ignorePatterns = services.setting.currentSettings().daemonIgnorePatterns || [
+        ".git/**",
+        ".obsidian/**",
+        ".livesync/**",
+        "node_modules/**",
+        "*.tmp",
+        ".DS_Store",
+    ];
+    const storageEventManager = new StorageEventManagerCLI(
+        basePath,
+        core,
+        {
+            fileProcessing: services.fileProcessing,
+            setting: services.setting,
+            vaultService: services.vault,
+            storageAccessManager: storageAccessManager,
+            APIService: services.API,
+        },
+        ignorePatterns
+    );
 
     // Storage access using CLI file system adapter
     const storageAccess = new ServiceFileAccessCLI({

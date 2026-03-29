@@ -13,6 +13,8 @@ import type { FileEventItemSentinel } from "@lib/managers/StorageEventManager";
 import type { NodeFile, NodeFolder } from "../adapters/NodeTypes";
 import * as fs from "fs/promises";
 import * as path from "path";
+import { watch } from "chokidar";
+import type { FSWatcher } from "chokidar";
 
 /**
  * CLI-specific type guard adapter
@@ -100,16 +102,104 @@ class CLIConverterAdapter implements IStorageEventConverterAdapter<NodeFile> {
 }
 
 /**
- * CLI-specific watch adapter (optional file watching with chokidar)
+ * Node.js-specific watch adapter using chokidar for file watching
  */
-class CLIWatchAdapter implements IStorageEventWatchAdapter {
-    constructor(private basePath: string) {}
+class NodeWatchAdapter implements IStorageEventWatchAdapter {
+    private watcher?: FSWatcher;
+    private basePath: string;
+    private ignorePatterns: string[];
+
+    constructor(basePath: string, ignorePatterns: string[] = []) {
+        this.basePath = basePath;
+        this.ignorePatterns = ignorePatterns;
+    }
 
     async beginWatch(handlers: IStorageEventWatchHandlers): Promise<void> {
-        // File watching is not activated in the CLI.
-        // Because the CLI is designed for push/pull operations, not real-time sync.
-        // console.error("[CLIWatchAdapter] File watching is not enabled in CLI version");
+        console.log(`[NodeWatchAdapter] Starting file watcher for: ${this.basePath}`);
+        console.log(`[NodeWatchAdapter] Ignore patterns: ${this.ignorePatterns.join(", ")}`);
+
+        this.watcher = watch(this.basePath, {
+            ignored: this.ignorePatterns,
+            persistent: true,
+            ignoreInitial: false, // Process existing files on startup
+            awaitWriteFinish: {
+                stabilityThreshold: 500, // Wait 500ms after last write
+                pollInterval: 100,
+            },
+        });
+
+        this.watcher
+            .on("add", async (filePath) => {
+                const relativePath = path.relative(this.basePath, filePath).replace(/\\/g, "/");
+                console.log(`[NodeWatchAdapter] File created: ${relativePath}`);
+
+                try {
+                    const stat = await fs.stat(filePath);
+                    const nodeFile: NodeFile = {
+                        path: relativePath as FilePath,
+                        stat: {
+                            size: stat.size,
+                            mtime: stat.mtimeMs,
+                            ctime: stat.ctimeMs,
+                            type: "file",
+                        },
+                    };
+                    await handlers.onCreate(nodeFile);
+                } catch (error) {
+                    console.error(`[NodeWatchAdapter] Error handling create for ${relativePath}:`, error);
+                }
+            })
+            .on("change", async (filePath) => {
+                const relativePath = path.relative(this.basePath, filePath).replace(/\\/g, "/");
+                console.log(`[NodeWatchAdapter] File changed: ${relativePath}`);
+
+                try {
+                    const stat = await fs.stat(filePath);
+                    const nodeFile: NodeFile = {
+                        path: relativePath as FilePath,
+                        stat: {
+                            size: stat.size,
+                            mtime: stat.mtimeMs,
+                            ctime: stat.ctimeMs,
+                            type: "file",
+                        },
+                    };
+                    await handlers.onChange(nodeFile, undefined);
+                } catch (error) {
+                    console.error(`[NodeWatchAdapter] Error handling change for ${relativePath}:`, error);
+                }
+            })
+            .on("unlink", async (filePath) => {
+                const relativePath = path.relative(this.basePath, filePath).replace(/\\/g, "/");
+                console.log(`[NodeWatchAdapter] File deleted: ${relativePath}`);
+
+                const nodeFile: NodeFile = {
+                    path: relativePath as FilePath,
+                    stat: {
+                        size: 0,
+                        mtime: Date.now(),
+                        ctime: Date.now(),
+                        type: "file",
+                    },
+                };
+                await handlers.onDelete(nodeFile);
+            })
+            .on("error", (error) => {
+                console.error(`[NodeWatchAdapter] Watcher error:`, error);
+            })
+            .on("ready", () => {
+                console.log(`[NodeWatchAdapter] File watcher ready - monitoring changes`);
+            });
+
         return Promise.resolve();
+    }
+
+    async endWatch(): Promise<void> {
+        if (this.watcher) {
+            console.log("[NodeWatchAdapter] Stopping file watcher");
+            await this.watcher.close();
+            this.watcher = undefined;
+        }
     }
 }
 
@@ -119,14 +209,14 @@ class CLIWatchAdapter implements IStorageEventWatchAdapter {
 export class CLIStorageEventManagerAdapter implements IStorageEventManagerAdapter<NodeFile, NodeFolder> {
     readonly typeGuard: CLITypeGuardAdapter;
     readonly persistence: CLIPersistenceAdapter;
-    readonly watch: CLIWatchAdapter;
+    readonly watch: NodeWatchAdapter;
     readonly status: CLIStatusAdapter;
     readonly converter: CLIConverterAdapter;
 
-    constructor(basePath: string) {
+    constructor(basePath: string, ignorePatterns: string[] = []) {
         this.typeGuard = new CLITypeGuardAdapter();
         this.persistence = new CLIPersistenceAdapter(basePath);
-        this.watch = new CLIWatchAdapter(basePath);
+        this.watch = new NodeWatchAdapter(basePath, ignorePatterns);
         this.status = new CLIStatusAdapter();
         this.converter = new CLIConverterAdapter();
     }

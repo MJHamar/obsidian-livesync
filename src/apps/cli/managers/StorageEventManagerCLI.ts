@@ -10,9 +10,10 @@ export class StorageEventManagerCLI extends StorageEventManagerBase<CLIStorageEv
     constructor(
         basePath: string,
         core: LiveSyncBaseCore<ServiceContext, IMinimumLiveSyncCommands>,
-        dependencies: StorageEventManagerBaseDependencies
+        dependencies: StorageEventManagerBaseDependencies,
+        ignorePatterns: string[] = []
     ) {
-        const adapter = new CLIStorageEventManagerAdapter(basePath);
+        const adapter = new CLIStorageEventManagerAdapter(basePath, ignorePatterns);
         super(adapter, dependencies);
         this.core = core;
     }

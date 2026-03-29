@@ -38,6 +38,7 @@ export interface CLICommandContext {
 }
 
 export const VALID_COMMANDS = new Set([
+    "daemon",
     "sync",
     "p2p-peers",
     "p2p-sync",
